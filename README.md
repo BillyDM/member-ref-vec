@@ -41,7 +41,7 @@ use member_ref_vec::MemberRefVec;
 
 // Pre-allocate some capacity in a non-performance critical part
 // of your code. Also, please note the lack of the `&` symbol in
-// the turbofish operator here. This is *not* allocating 1024
+// the type parameter here. This is *not* allocating 1024
 // buffers with 256 f32s, This is still just allocating 1024
 // references to buffers.
 let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);

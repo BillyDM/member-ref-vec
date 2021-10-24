@@ -1,6 +1,6 @@
 [package]
 name = "member-ref-vec"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Billy Messenger <BillyDM@tutamail.com>"]
 license = "MIT"

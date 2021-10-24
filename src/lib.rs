@@ -65,7 +65,7 @@
 //!
 //! // Pre-allocate some capacity in a non-performance critical part
 //! // of your code. Also, please note the lack of the `&` symbol in
-//! // the turbofish operator here. This is *not* allocating 1024
+//! // the type parameter here. This is *not* allocating 1024
 //! // buffers with 256 f32s, This is still just allocating 1024
 //! // references to buffers.
 //! let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
@@ -137,7 +137,7 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 /// the majority of the time only a few slots are being used, there can be a performance
 /// penalty of having a function with an unusually large stack size.
 ///
-/// Option 2 is to use this crate. It works by creating a struct that contains a Vec of
+/// Option 2 is to use this struct. It works by creating a struct that contains a Vec of
 /// static references that can be stored in a member variable. Because Rust does not like
 /// self-referencing structs very well, this Vec must have the type `Vec<&'static T>`.
 /// However, it's more than likely that your data does not have a static lifetime. The key
@@ -155,7 +155,7 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 ///
 /// // Pre-allocate some capacity in a non-performance critical part
 /// // of your code. Also, please note the lack of the `&` symbol in
-/// // the turbofish operator here. This is *not* allocating 1024
+/// // the type parameter here. This is *not* allocating 1024
 /// // buffers with 256 f32s, This is still just allocating 1024
 /// // references to buffers.
 /// let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
@@ -371,7 +371,7 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 /// the majority of the time only a few slots are being used, there can be a performance
 /// penalty of having a function with an unusually large stack size.
 ///
-/// Option 2 is to use this crate. It works by creating a struct that contains a Vec of
+/// Option 2 is to use this struct. It works by creating a struct that contains a Vec of
 /// static references that can be stored in a member variable. Because Rust does not like
 /// self-referencing structs very well, this Vec must have the type `Vec<&'static mut T>`.
 /// However, it's more than likely that your data does not have a static lifetime. The key
@@ -389,7 +389,7 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 ///
 /// // Pre-allocate some capacity in a non-performance critical part
 /// // of your code. Also, please note the lack of the `&mut` symbol in
-/// // the turbofish operator here. This is *not* allocating 1024
+/// // the type parameter here. This is *not* allocating 1024
 /// // buffers with 256 f32s, This is still just allocating 1024
 /// // references to buffers.
 /// let mut buffer_refs: MemberRefVecMut<[f32; 256]> = MemberRefVecMut::with_capacity(1024);
