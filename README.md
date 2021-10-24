@@ -30,7 +30,7 @@ However, note that if we push more than the 8 slots we defined in this SmallVec,
 
 Option 1 is to just allocate a large number of slots and hope that it never exceeds capacity. However, this can potentially overflow your stack if it gets too large, and if the majority of the time only a few slots are being used, there can be a performance penalty of having a function with an unusually large stack size.
 
-Option 2 is to use this crate. It works by creating a struct that contains a Vec of static references that can be stored in a member variable. Because Rust does not like self-referencing structs very well, this Vec must have the type `Vec<&'static T>`. However, it's more than likely that your data does not have a static lifetime. The key trick here is that in order to use this struct, it must be borrowed and used inside a closure. This closure converts this `Vec<&'static T>` into a `Vec<&'a T>`. This operation remains safe because the closure ensures the Vec it sends you is always empty, meaning no uninitialized data can be ever be read from it and cause undefined behavior. It also automatically clears the Vec at the end of the closure's scope so as to avoid self-referential structs.
+Option 2 is to use this crate. It works by creating a struct that contains a Vec of static references that can be stored in a member variable. Because Rust does not like self-referencing structs very well, this Vec must have the type `Vec<&'static T>`. However, it's more than likely that your data does not have a static lifetime. The key trick here is that in order to use this struct, it must be borrowed and used inside a closure. This function converts this `Vec<&'static T>` into a `Vec<&'a T>` that is then sent to your closure. This operation remains safe because the function ensures that the Vec it sends you is always empty, meaning no uninitialized data can be ever be read from it and cause undefined behavior. It also automatically clears the Vec at the end of the closure's scope so as to avoid self-referential structs.
 ```rust
 // Pre-allocate some capacity in a non-performance critical part
 // of your code. Also, please note the lack of the `&` symbol in
@@ -50,5 +50,8 @@ my_performance_critial_struct.buffer_refs.as_empty_vec_of_refs(|buffers| {
   i_want_a_slice_of_references(&buffers[..]);
 });
 ```
+
+## Safety Notes
+This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know if this assumption is correct or not, please contact me.
 
 [`smallvec`]: https://crates.io/crates/smallvec
