@@ -2,6 +2,17 @@
 name = "member-ref-vec"
 version = "0.1.0"
 edition = "2021"
+authors = ["Billy Messenger <BillyDM@tutamail.com>"]
+license = "MIT"
+keywords = ["ref", "reference", "references", "vec", "vector"]
+categories = ["data-structures"]
+description = "Allows you to create a \"temporary\" Vec of references which persists its allocated memory and which can be stored as a member variable"
+repository = "https://github.com/BillyDM/member-ref-vec"
+documentation = "https://docs.rs/member-ref-vec"
+readme = "README.md"
+
+[badges]
+maintenance = { status = "passively-maintained" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -1,4 +1,9 @@
-# member-ref-vec
+# Member Reference Vector
+![Stable](https://github.com/BillyDM/member-ref-vec/workflows/stable/badge.svg)
+![Nightly](https://github.com/BillyDM/member-ref-vec/workflows/nightly/badge.svg)
+[![Documentation](https://docs.rs/member-ref-vec/badge.svg)](https://docs.rs/member-ref-vec)
+[![Crates.io](https://img.shields.io/crates/v/member-ref-vec.svg)](https://crates.io/crates/member-ref-vec)
+[![License](https://img.shields.io/crates/l/member-ref-vec.svg)](https://github.com/BillyDM/member-ref-vec/blob/main/LICENSE)
 
 ***Please note that the safety of this code has not been battle-tested yet. Use at your own risk! Most of the functionality of this crate can also be acheived using [`smallvec`], so please consider using that before considering to use this crate.***
 
@@ -39,13 +44,13 @@ use member_ref_vec::MemberRefVec;
 // the turbofish operator here. This is *not* allocating 1024
 // buffers with 256 f32s, This is still just allocating 1024
 // references to buffers.
-let buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
+let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
 
 // (You may also use `MemberRefVecMut` for mutable references.)
 
 // -- In the performance-critical part of your code: ---------
 
-my_performance_critial_struct.buffer_refs.as_empty_vec_of_refs(|buffers| {
+buffer_refs.as_empty_vec_of_refs(|buffers| {
   // Does not allocated memory! (as long as you don't push more
   // elements than what was allocated in the non-realtime thread)
   buffers.push(&my_buffer_1);
