@@ -226,7 +226,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         // can be read by the user.
         //
         // * We use the same capacity, so all memory here points to valid
-        // owned Memberated data.
+        // owned allocated data.
         //
         // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
         // always have the exact same layout in memory.
@@ -237,7 +237,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         (f)(&mut borrowed_v);
 
         // Make sure that any items that were pushed by the user are
-        // deMemberated correctly.
+        // deallocated correctly.
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
@@ -251,7 +251,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         // can be read by the user.
         //
         // * We use the same capacity, so all memory here points to valid
-        // owned Memberated data.
+        // owned allocated data.
         //
         // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
         // always have the exact same layout in memory.
@@ -460,7 +460,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         // can be read by the user.
         //
         // * We use the same capacity, so all memory here points to valid
-        // owned Memberated data.
+        // owned allocated data.
         //
         // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
         // always have the exact same layout in memory.
@@ -471,7 +471,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         (f)(&mut borrowed_v);
 
         // Make sure that any items that were pushed by the user are
-        // deMemberated correctly.
+        // deallocated correctly.
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
@@ -485,7 +485,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         // can be read by the user.
         //
         // * We use the same capacity, so all memory here points to valid
-        // owned Memberated data.
+        // owned allocated data.
         //
         // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
         // always have the exact same layout in memory.
