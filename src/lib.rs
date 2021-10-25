@@ -204,6 +204,13 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         }
     }
 
+    /// Creates a new `MemberRefVec` from the given vector `v`.
+    pub fn from_vec(v: Vec<&'static T>) -> Self {
+        Self {
+            v: Some(ManuallyDrop::new(v)),
+        }
+    }
+
     /// Borrow this vector as an `&mut Vec<&'a T>`.
     ///
     /// This borrowed vector will **always** be cleared to a length of 0
@@ -315,6 +322,13 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     /// The current capacity of this vector.
     pub fn capacity(&self) -> usize {
         self.v.as_ref().unwrap().capacity()
+    }
+
+    /// Consumes this `MemberRefVec` and returns the underlying `Vec<&'static T>`.
+    pub fn into_inner(mut self) -> Vec<&'static T> {
+        let v = self.v.take().unwrap();
+        let v = ManuallyDrop::into_inner(v);
+        v
     }
 }
 
@@ -438,6 +452,13 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         }
     }
 
+    /// Creates a new `MemberRefVecMut` from the given vector `v`.
+    pub fn from_vec(v: Vec<&'static mut T>) -> Self {
+        Self {
+            v: Some(ManuallyDrop::new(v)),
+        }
+    }
+
     /// Borrow this vector as an `&mut Vec<&'a mut T>`.
     ///
     /// This borrowed vector will **always** be cleared to a length of 0
@@ -549,6 +570,13 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     /// The current capacity of this vector.
     pub fn capacity(&self) -> usize {
         self.v.as_ref().unwrap().capacity()
+    }
+
+    /// Consumes this `MemberRefVecMut` and returns the underlying `Vec<&'static mut T>`.
+    pub fn into_inner(mut self) -> Vec<&'static mut T> {
+        let v = self.v.take().unwrap();
+        let v = ManuallyDrop::into_inner(v);
+        v
     }
 }
 
