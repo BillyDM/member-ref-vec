@@ -205,7 +205,9 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     }
 
     /// Creates a new `MemberRefVec` from the given vector `v`.
-    pub fn from_vec(v: Vec<&'static T>) -> Self {
+    pub fn from_vec(mut v: Vec<&'static T>) -> Self {
+        v.clear();
+
         Self {
             v: Some(ManuallyDrop::new(v)),
         }
@@ -453,7 +455,9 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     }
 
     /// Creates a new `MemberRefVecMut` from the given vector `v`.
-    pub fn from_vec(v: Vec<&'static mut T>) -> Self {
+    pub fn from_vec(mut v: Vec<&'static mut T>) -> Self {
+        v.clear();
+        
         Self {
             v: Some(ManuallyDrop::new(v)),
         }
