@@ -241,7 +241,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
-        // the user caused the vector to reMemberate and/or move.
+        // the user caused the vector to relocate and/or move.
         let capacity = borrowed_v.capacity();
         let ptr = Vec::as_mut_ptr(&mut borrowed_v);
 
@@ -266,11 +266,11 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     /// then this is a no-op.
     /// * When the given `capacity` is greater than this vector's capacity,
     /// then this is equivalent to `Vec::reserve(capacity - vec.capacity())`.
-    /// The Memberator may still reserve a larger capacity than requested.
+    /// The allocator may still reserve a larger capacity than requested.
     /// * When the given `capacity` is less than this vector's capacity.
     /// this is equivalent to calling `Vec::shrink_to_fit()` and then
     /// reserving the space needed using `Vec::reserve(capacity)`. The
-    /// Memberator may still reserve a larger capacity than requested.
+    /// allocator may still reserve a larger capacity than requested.
     pub fn set_capacity(&mut self, capacity: usize) {
         let v = self.v.as_mut().unwrap();
 
@@ -292,11 +292,11 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     /// then this is a no-op.
     /// * When the given `capacity` is greater than this vector's capacity,
     /// then this is equivalent to `Vec::reserve_exact(capacity - vec.capacity())`.
-    /// The Memberator may still reserve a larger capacity than requested.
+    /// The allocator may still reserve a larger capacity than requested.
     /// * When the given `capacity` is less than this vector's capacity.
     /// this is equivalent to calling `Vec::shrink_to_fit()` and then
     /// reserving the space needed using `Vec::reserve_exact(capacity)`. The
-    /// Memberator may still reserve a larger capacity than requested.
+    /// allocator may still reserve a larger capacity than requested.
     pub fn set_capacity_exact(&mut self, capacity: usize) {
         let v = self.v.as_mut().unwrap();
 
@@ -475,7 +475,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
-        // the user caused the vector to reMemberate and/or move.
+        // the user caused the vector to relocate and/or move.
         let capacity = borrowed_v.capacity();
         let ptr = Vec::as_mut_ptr(&mut borrowed_v);
 
@@ -500,11 +500,11 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     /// then this is a no-op.
     /// * When the given `capacity` is greater than this vector's capacity,
     /// then this is equivalent to `Vec::reserve(capacity - vec.capacity())`.
-    /// The Memberator may still reserve a larger capacity than requested.
+    /// The allocator may still reserve a larger capacity than requested.
     /// * When the given `capacity` is less than this vector's capacity.
     /// this is equivalent to calling `Vec::shrink_to_fit()` and then
     /// reserving the space needed using `Vec::reserve(capacity)`. The
-    /// Memberator may still reserve a larger capacity than requested.
+    /// allocator may still reserve a larger capacity than requested.
     pub fn set_capacity(&mut self, capacity: usize) {
         let v = self.v.as_mut().unwrap();
 
@@ -526,11 +526,11 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     /// then this is a no-op.
     /// * When the given `capacity` is greater than this vector's capacity,
     /// then this is equivalent to `Vec::reserve_exact(capacity - vec.capacity())`.
-    /// The Memberator may still reserve a larger capacity than requested.
+    /// The allocator may still reserve a larger capacity than requested.
     /// * When the given `capacity` is less than this vector's capacity.
     /// this is equivalent to calling `Vec::shrink_to_fit()` and then
     /// reserving the space needed using `Vec::reserve_exact(capacity)`. The
-    /// Memberator may still reserve a larger capacity than requested.
+    /// allocator may still reserve a larger capacity than requested.
     pub fn set_capacity_exact(&mut self, capacity: usize) {
         let v = self.v.as_mut().unwrap();
 
