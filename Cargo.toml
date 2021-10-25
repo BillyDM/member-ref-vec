@@ -1,6 +1,6 @@
 [package]
 name = "member-ref-vec"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 authors = ["Billy Messenger <BillyDM@tutamail.com>"]
 license = "MIT"
@@ -17,6 +17,7 @@ maintenance = { status = "passively-maintained" }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+vec-utils = "0.3.0"
 
 [dev-dependencies]
 smallvec = "1.7"

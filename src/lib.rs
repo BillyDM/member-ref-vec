@@ -1,290 +1,130 @@
-//! This crate allows you to create a "temporary" Vec of references which persists its
-//! allocated memory and which can be stored as a member variable.
-//!
-//! For example, say that you want to prepare a Vec of buffer references to send to another
-//! piece of your code. But the issue is that this will allocate memory, which can lead to
-//! issues with performance (or in the case of realtime code, allocation of any kind is
-//! unacceptable).
-//! ```rust
-//! # let my_buffer_1: [f32; 256] = [0.0; 256];
-//! # let my_buffer_2: [f32; 256] = [0.0; 256];
-//! # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-//! let mut buffers: Vec<&[f32; 256]> = Vec::new();
-//!
-//! // "Push" allocates memory here
-//! buffers.push(&my_buffer_1);
-//! buffers.push(&my_buffer_2);
-//!
-//! i_want_a_slice_of_references(&buffers[..]);
-//! ```
-//!
-//! The usual solution here is to use [`smallvec`] which allocates the memory on the stack.
-//! In fact, if this solves your use case, please use that instead of this crate.
-//! ```rust
-//! # use smallvec::SmallVec;
-//! # let my_buffer_1: [f32; 256] = [0.0; 256];
-//! # let my_buffer_2: [f32; 256] = [0.0; 256];
-//! # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-//! let mut buffers: SmallVec<[&[f32; 256]; 8]> = SmallVec::new();
-//!
-//! // Does not allocated memory anymore!
-//! buffers.push(&my_buffer_1);
-//! buffers.push(&my_buffer_2);
-//!
-//! i_want_a_slice_of_references(&buffers[..]);
-//! ```
-//!
-//! However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
-//! will allocate memory again. If the maximum number of slots is not known at compile-time,
-//! you have 2 options:
-//!
-//! Option 1 is to just allocate a large number of slots and hope that it never exceeds
-//! capacity. However, this can potentially overflow your stack if it gets too large, and if
-//! the majority of the time only a few slots are being used, there can be a performance
-//! penalty in having a function with an unusually large stack size.
-//!
-//! Option 2 is to use this crate. Here's how it works:
-//!
-//! Because Rust does not like self-referencing structs, the `MemberRefVec` must contain the
-//! type `Vec<&'static T>`. But it is more than likely your data does not have a static
-//! lifetime.
-//!
-//! The key trick here is a function in this struct that converts this `Vec<&'static T>`
-//! into a `Vec<&'a T>`, which is then sent to a closure. This operation is safe because this
-//! Vec is always cleared before being sent to the closure, meaning no uninitialized data can
-//! be ever be read from it and cause undefined behavior. It also avoids self-referential
-//! structs by automatically clearing the Vec at the end of the closure's scope.
-//! ```rust
-//! # let my_buffer_1: [f32; 256] = [0.0; 256];
-//! # let my_buffer_2: [f32; 256] = [0.0; 256];
-//! # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-//! use member_ref_vec::MemberRefVec;
-//!
-//! // Pre-allocate some capacity in a non-performance critical part
-//! // of your code. Also please note the lack of the `&` symbol in
-//! // the type parameter here. This is *not* allocating 1024
-//! // buffers with 256 f32s, This is still just allocating 1024
-//! // references to buffers.
-//! let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
-//!
-//! // -- In the performance-critical part of your code: ---------
-//!
-//! buffer_refs.as_empty_vec_of_refs(|buffers| {
-//!   // Does not allocated memory! (as long as you don't push more
-//!   // elements than what was allocated in the non-performance
-//!   // critical part of your code)
-//!   buffers.push(&my_buffer_1);
-//!   buffers.push(&my_buffer_2);
-//!
-//!   i_want_a_slice_of_references(&buffers[..]);
-//! });
-//! ```
-//!
-//! ## Safety Notes
-//! *Please note that the safety of this code has not been battle-tested yet. It appears
-//! to be safe through my brief testing, but use at your own risk. Most of the
-//! functionality of this crate can also be acheived using [`smallvec`], so please consider
-//! using that before considering to use this crate.*
-//! 
-//! This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
-//! memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
-//! layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
-//! if this assumption is correct or not, please contact me.
-//!
-//! [`smallvec`]: https://crates.io/crates/smallvec
+use std::mem::size_of;
 
-use std::{ffi::c_void, mem::ManuallyDrop};
-
-/// This struct allows you to create a "temporary" Vec of immutable references which persists
-/// its allocated memory and which can be stored as a member variable.
-///
-/// For example, say that you want to prepare a Vec of buffer references to send to another
-/// piece of your code. But the issue is that this will allocate memory, which can lead to
-/// issues with performance (or in the case of realtime code, allocation of any kind is
-/// unacceptable).
-/// ```rust
-/// # let my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-/// let mut buffers: Vec<&[f32; 256]> = Vec::new();
-///
-/// // "Push" allocates memory here
-/// buffers.push(&my_buffer_1);
-/// buffers.push(&my_buffer_2);
-///
-/// i_want_a_slice_of_references(&buffers[..]);
-/// ```
-///
-/// The usual solution here is to use [`smallvec`] which allocates the memory on the stack.
-/// In fact, if this solves your use case, please use that instead of this crate.
-/// ```rust
-/// # use smallvec::SmallVec;
-/// # let my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-/// let mut buffers: SmallVec<[&[f32; 256]; 8]> = SmallVec::new();
-///
-/// // Does not allocated memory anymore!
-/// buffers.push(&my_buffer_1);
-/// buffers.push(&my_buffer_2);
-///
-/// i_want_a_slice_of_references(&buffers[..]);
-/// ```
-///
-/// However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
-/// will allocate memory again. If the maximum number of slots is not known at compile-time,
-/// you have 2 options:
-///
-/// Option 1 is to just allocate a large number of slots and hope that it never exceeds
-/// capacity. However, this can potentially overflow your stack if it gets too large, and if
-/// the majority of the time only a few slots are being used, there can be a performance
-/// penalty in having a function with an unusually large stack size.
-///
-/// Option 2 is to use this struct. Here's how it works:
-///
-/// Because Rust does not like self-referencing structs, the `MemberRefVec` must contain the
-/// type `Vec<&'static T>`. But it is more than likely your data does not have a static
-/// lifetime.
-///
-/// The key trick here is a function in this struct that converts this `Vec<&'static T>`
-/// into a `Vec<&'a T>`, which is then sent to a closure. This operation is safe because this
-/// Vec is always cleared before being sent to the closure, meaning no uninitialized data can
-/// be ever be read from it and cause undefined behavior. It also avoids self-referential
-/// structs by automatically clearing the Vec at the end of the closure's scope.
-/// ```rust
-/// # let my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_references(_slice: &[&[f32; 256]]) {}
-/// use member_ref_vec::MemberRefVec;
-///
-/// // Pre-allocate some capacity in a non-performance critical part
-/// // of your code. Also please note the lack of the `&` symbol in
-/// // the type parameter here. This is *not* allocating 1024
-/// // buffers with 256 f32s, This is still just allocating 1024
-/// // references to buffers.
-/// let mut buffer_refs: MemberRefVec<[f32; 256]> = MemberRefVec::with_capacity(1024);
-///
-/// // -- In the performance-critical part of your code: ---------
-///
-/// buffer_refs.as_empty_vec_of_refs(|buffers| {
-///   // Does not allocated memory! (as long as you don't push more
-///   // elements than what was allocated in the non-performance
-///   // critical part of your code)
-///   buffers.push(&my_buffer_1);
-///   buffers.push(&my_buffer_2);
-///
-///   i_want_a_slice_of_references(&buffers[..]);
-/// });
-/// ```
-///
-/// ## Safety Notes
-/// *Please note that the safety of this code has not been battle-tested yet. It appears
-/// to be safe through my brief testing, but use at your own risk. Most of the
-/// functionality of this struct can also be acheived using [`smallvec`], so please consider
-/// using that before considering to use this struct.*
-/// 
-/// This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
-/// memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
-/// layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
-/// if this assumption is correct or not, please contact me.
-///
-/// [`smallvec`]: https://crates.io/crates/smallvec
 pub struct MemberRefVec<T: 'static + Sized> {
-    v: Option<ManuallyDrop<Vec<&'static T>>>,
-}
-
-impl<T: 'static + Sized> Default for MemberRefVec<T> {
-    fn default() -> Self {
-        Self::new()
-    }
+    v: Option<Vec<&'static mut T>>,
 }
 
 impl<T: 'static + Sized> MemberRefVec<T> {
     /// Creates a new `MemberRefVec` with an empty capacity.
     pub fn new() -> Self {
         Self {
-            v: Some(ManuallyDrop::new(Vec::new())),
+            v: Some(Vec::new()),
         }
     }
 
     /// Creates a new `MemberRefVec` with the given `capacity`.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            v: Some(ManuallyDrop::new(Vec::with_capacity(capacity))),
+            v: Some(Vec::with_capacity(capacity)),
         }
     }
 
     /// Creates a new `MemberRefVec` from the given vector `v`.
-    pub fn from_vec(mut v: Vec<&'static T>) -> Self {
+    pub fn from_vec(mut v: Vec<&'static mut T>) -> Self {
         v.clear();
 
-        Self {
-            v: Some(ManuallyDrop::new(v)),
+        Self { v: Some(v) }
+    }
+
+    pub fn take_empty_vec<'a>(&mut self) -> Vec<&'a T> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a T>());
+
+        let v = self.v.take().expect("Vec already taken from MemberRefVec. Remember to call MemberRefVec::put() once the taken Vec is finished being used.");
+        Self::convert_to(v)
+    }
+
+    pub fn try_take_empty_vec<'a>(&mut self) -> Result<Vec<&'a T>, ()> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a T>());
+
+        if let Some(v) = self.v.take() {
+            Ok(Self::convert_to(v))
+        } else {
+            Err(())
         }
     }
 
-    /// Borrow this vector as an `&mut Vec<&'a T>`.
-    ///
-    /// This borrowed vector will **always** be cleared to a length of 0
-    /// before being sent to the given closure, and all elements will be cleared
-    /// once the closure exits.
-    ///
-    /// However, the reserved capacity of this vector *will* be retained across
-    /// consecutive calls to `as_empty_vec_of_refs()`.
-    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut Vec<&'a T>)>(&mut self, f: F) {
-        let mut v = self.v.take().unwrap();
+    pub fn take_empty_vec_mut<'a>(&mut self) -> Vec<&'a mut T> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a mut T>());
 
-        v.clear();
+        let v = self.v.take().expect("Vec already taken from MemberRefVec. Remember to call MemberRefVec::put() once the taken Vec is finished being used.");
+        Self::convert_to_mut(v)
+    }
 
-        let capacity = v.capacity();
-        let ptr = Vec::as_mut_ptr(&mut v);
+    pub fn try_take_empty_vec_mut<'a>(&mut self) -> Result<Vec<&'a mut T>, ()> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a T>());
 
-        // This is safe because:
-        //
-        // * We cleared the vector to a length of 0, so no uninitialized data
-        // can be read by the user.
-        //
-        // * We use the same capacity, so all memory here points to valid
-        // owned allocated data.
-        //
-        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
-        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
-        // of this function's scope.
-        //
-        // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
-        // always have the exact same layout in memory.
-        let mut borrowed_v: ManuallyDrop<Vec<&'a T>> = ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(ptr as *mut c_void as *mut &'a T, 0, capacity)
-        });
+        if let Some(v) = self.v.take() {
+            Ok(Self::convert_to_mut(v))
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn put(&mut self, returned: Vec<&T>) {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&T>());
+
+        self.v = Some(Self::convert_from(returned));
+    }
+
+    pub fn try_put<'a>(&mut self, returned: Vec<&'a T>) -> Result<(), Vec<&'a T>> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a T>());
+
+        if self.v.is_none() {
+            self.v = Some(Self::convert_from(returned));
+            Ok(())
+        } else {
+            Err(returned)
+        }
+    }
+
+    pub fn put_mut(&mut self, returned: Vec<&mut T>) {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&mut T>());
+
+        self.v = Some(Self::convert_from_mut(returned));
+    }
+
+    pub fn try_put_mut<'a>(&mut self, returned: Vec<&'a mut T>) -> Result<(), Vec<&'a mut T>> {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a mut T>());
+
+        if self.v.is_none() {
+            self.v = Some(Self::convert_from_mut(returned));
+
+            Ok(())
+        } else {
+            Err(returned)
+        }
+    }
+
+    pub fn use_as_empty_vec<'a, F: FnOnce(&mut Vec<&'a T>)>(&mut self, f: F) {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a T>());
+
+        let v = self.v.take().expect("Vec already taken from MemberRefVec. Remember to call MemberRefVec::put() once the taken Vec is finished being used.");
+        let mut borrowed_v: Vec<&'a T> = Self::convert_to(v);
 
         (f)(&mut borrowed_v);
 
-        // Make sure that any items that were pushed by the user are
-        // dropped correctly.
-        borrowed_v.clear();
+        self.v = Some(Self::convert_from(borrowed_v));
+    }
 
-        // Make sure that the pointer and capacity are still correct in case
-        // the user caused the vector to relocate and/or move.
-        let capacity = borrowed_v.capacity();
-        let ptr = Vec::as_mut_ptr(&mut borrowed_v);
+    pub fn use_as_empty_vec_mut<'a, F: FnOnce(&mut Vec<&'a mut T>)>(&mut self, f: F) {
+        // Not for safety, only to ensure the expected performance characteristic.
+        debug_assert!(size_of::<&'static mut T>() == size_of::<&'a mut T>());
 
-        // This is safe because:
-        //
-        // * We cleared the vector to a length of 0, so no uninitialized data
-        // can be read by the user.
-        //
-        // * We use the same capacity, so all memory here points to valid
-        // owned allocated data.
-        //
-        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
-        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
-        // of this function's scope.
-        //
-        // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
-        // always have the exact same layout in memory.
-        self.v = Some(ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(ptr as *mut c_void as *mut &'static T, 0, capacity)
-        }));
+        let v = self.v.take().expect("Vec already taken from MemberRefVec. Remember to call MemberRefVec::put() once the taken Vec is finished being used.");
+        let mut borrowed_v: Vec<&'a mut T> = Self::convert_to_mut(v);
+
+        (f)(&mut borrowed_v);
+
+        self.v = Some(Self::convert_from_mut(borrowed_v));
     }
 
     /// Attempts to set the capacity of this vector.
@@ -345,284 +185,37 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     }
 
     /// Consumes this `MemberRefVec` and returns the underlying `Vec<&'static T>`.
-    pub fn into_inner(mut self) -> Vec<&'static T> {
-        let v = self.v.take().unwrap();
-        let v = ManuallyDrop::into_inner(v);
-        v
-    }
-}
-
-impl<T: 'static + Sized> Drop for MemberRefVec<T> {
-    fn drop(&mut self) {
-        if let Some(v) = self.v.take() {
-            let _ = ManuallyDrop::into_inner(v);
-        }
-    }
-}
-
-/// This struct allows you to create a "temporary" Vec of mutable references which persists
-/// its allocated memory and which can be stored as a member variable.
-///
-/// For example, say that you want to prepare a Vec of buffer references to send to another
-/// piece of your code. But the issue is that this will allocate memory, which can lead to
-/// issues with performance (or in the case of realtime code, allocation of any kind is
-/// unacceptable).
-/// ```rust
-/// # let mut my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let mut my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_mut_references(_slice: &mut [&mut [f32; 256]]) {}
-/// let mut buffers: Vec<&mut [f32; 256]> = Vec::new();
-///
-/// // "Push" allocates memory here
-/// buffers.push(&mut my_buffer_1);
-/// buffers.push(&mut my_buffer_2);
-///
-/// i_want_a_slice_of_mut_references(&mut buffers[..]);
-/// ```
-///
-/// The usual solution here is to use [`smallvec`] which allocates the memory on the stack.
-/// In fact, if this solves your use case, please use that instead of this crate.
-/// ```rust
-/// # use smallvec::SmallVec;
-/// # let mut my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let mut my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_mut_references(_slice: &mut [&mut [f32; 256]]) {}
-/// let mut buffers: SmallVec<[&mut [f32; 256]; 8]> = SmallVec::new();
-///
-/// // Does not allocated memory anymore!
-/// buffers.push(&mut my_buffer_1);
-/// buffers.push(&mut my_buffer_2);
-///
-/// i_want_a_slice_of_mut_references(&mut buffers[..]);
-/// ```
-///
-/// However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
-/// will allocate memory again. If the maximum number of slots is not known at compile-time,
-/// you have 2 options:
-///
-/// Option 1 is to just allocate a large number of slots and hope that it never exceeds
-/// capacity. However, this can potentially overflow your stack if it gets too large, and if
-/// the majority of the time only a few slots are being used, there can be a performance
-/// penalty in having a function with an unusually large stack size.
-///
-/// Option 2 is to use this struct. Here's how it works:
-///
-/// Because Rust does not like self-referencing structs, the `MemberRefVecMut` must contain
-/// the type `Vec<&'static mut T>`. But it is more than likely your data does not have a
-/// static lifetime.
-///
-/// The key trick here is a function in this struct that converts this `Vec<&'static mut T>`
-/// into a `Vec<&'a mut T>`, which is then sent to a closure. This operation is safe because
-/// this Vec is always cleared before being sent to the closure, meaning no uninitialized
-/// data can be ever be read from it and cause undefined behavior. It also avoids
-/// self-referential structs by automatically clearing the Vec at the end of the closure's
-/// scope.
-/// ```rust
-/// # let mut my_buffer_1: [f32; 256] = [0.0; 256];
-/// # let mut my_buffer_2: [f32; 256] = [0.0; 256];
-/// # fn i_want_a_slice_of_mut_references(_slice: &mut [&mut [f32; 256]]) {}
-/// use member_ref_vec::MemberRefVecMut;
-///
-/// // Pre-allocate some capacity in a non-performance critical part
-/// // of your code. Also, please note the lack of the `&mut` symbol in
-/// // the type parameter here. This is *not* allocating 1024
-/// // buffers with 256 f32s, This is still just allocating 1024
-/// // references to buffers.
-/// let mut buffer_refs: MemberRefVecMut<[f32; 256]> = MemberRefVecMut::with_capacity(1024);
-///
-/// // -- In the performance-critical part of your code: ---------
-///
-/// buffer_refs.as_empty_vec_of_refs(|buffers| {
-///   // Does not allocated memory! (as long as you don't push more
-///   // elements than what was allocated in the non-performance
-///   // critical part of your code)
-///   buffers.push(&mut my_buffer_1);
-///   buffers.push(&mut my_buffer_2);
-///
-///   i_want_a_slice_of_mut_references(&mut buffers[..]);
-/// });
-/// ```
-///
-/// ## Safety Notes
-/// *Please note that the safety of this code has not been battle-tested yet. It appears
-/// to be safe through my brief testing, but use at your own risk. Most of the
-/// functionality of this struct can also be acheived using [`smallvec`], so please consider
-/// using that before considering to use this struct.*
-/// 
-/// This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
-/// memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
-/// layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
-/// if this assumption is correct or not, please contact me.
-///
-/// [`smallvec`]: https://crates.io/crates/smallvec
-pub struct MemberRefVecMut<T: 'static + Sized> {
-    v: Option<ManuallyDrop<Vec<&'static mut T>>>,
-}
-
-impl<T: 'static + Sized> Default for MemberRefVecMut<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: 'static + Sized> MemberRefVecMut<T> {
-    /// Creates a new `MemberRefVec` with an empty capacity.
-    pub fn new() -> Self {
-        Self {
-            v: Some(ManuallyDrop::new(Vec::new())),
-        }
-    }
-
-    /// Creates a new `MemberRefVec` with the given `capacity`.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            v: Some(ManuallyDrop::new(Vec::with_capacity(capacity))),
-        }
-    }
-
-    /// Creates a new `MemberRefVecMut` from the given vector `v`.
-    pub fn from_vec(mut v: Vec<&'static mut T>) -> Self {
-        v.clear();
-
-        Self {
-            v: Some(ManuallyDrop::new(v)),
-        }
-    }
-
-    /// Borrow this vector as an `&mut Vec<&'a mut T>`.
-    ///
-    /// This borrowed vector will **always** be cleared to a length of 0
-    /// before being sent to the given closure, and all elements will be cleared
-    /// once the closure exits.
-    ///
-    /// However, the reserved capacity of this vector *will* be retained across
-    /// consecutive calls to `as_empty_vec_of_refs()`.
-    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut Vec<&'a mut T>)>(&mut self, f: F) {
-        let mut v = self.v.take().unwrap();
-
-        v.clear();
-
-        let capacity = v.capacity();
-        let ptr = Vec::as_mut_ptr(&mut v);
-
-        // This is safe because:
-        //
-        // * We cleared the vector to a length of 0, so no uninitialized data
-        // can be read by the user.
-        //
-        // * We use the same capacity, so all memory here points to valid
-        // owned allocated data.
-        //
-        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
-        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
-        // of this function's scope.
-        //
-        // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
-        // always have the exact same layout in memory.
-        let mut borrowed_v: ManuallyDrop<Vec<&'a mut T>> = ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(ptr as *mut c_void as *mut &'a mut T, 0, capacity)
-        });
-
-        (f)(&mut borrowed_v);
-
-        // Make sure that any items that were pushed by the user are
-        // dropped correctly.
-        borrowed_v.clear();
-
-        // Make sure that the pointer and capacity are still correct in case
-        // the user caused the vector to relocate and/or move.
-        let capacity = borrowed_v.capacity();
-        let ptr = Vec::as_mut_ptr(&mut borrowed_v);
-
-        // This is safe because:
-        //
-        // * We cleared the vector to a length of 0, so no uninitialized data
-        // can be read by the user.
-        //
-        // * We use the same capacity, so all memory here points to valid
-        // owned allocated data.
-        //
-        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
-        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
-        // of this function's scope.
-        //
-        // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
-        // always have the exact same layout in memory.
-        self.v = Some(ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts(ptr as *mut c_void as *mut &'static mut T, 0, capacity)
-        }));
-    }
-
-    /// Attempts to set the capacity of this vector.
-    ///
-    /// * When the given `capacity` is equal to this vector's capacity,
-    /// then this is a no-op.
-    /// * When the given `capacity` is greater than this vector's capacity,
-    /// then this is equivalent to `Vec::reserve(capacity - vec.capacity())`.
-    /// The allocator may still reserve a larger capacity than requested.
-    /// * When the given `capacity` is less than this vector's capacity.
-    /// this is equivalent to calling `Vec::shrink_to_fit()` and then
-    /// reserving the space needed using `Vec::reserve(capacity)`. The
-    /// allocator may still reserve a larger capacity than requested.
-    pub fn set_capacity(&mut self, capacity: usize) {
-        let v = self.v.as_mut().unwrap();
-
-        if capacity > v.capacity() {
-            let additional = capacity - v.capacity();
-            v.reserve(additional);
-        } else if capacity < v.capacity() {
-            v.shrink_to_fit();
-            if capacity > v.capacity() {
-                let additional = capacity - v.capacity();
-                v.reserve(additional);
-            }
-        }
-    }
-
-    /// Attempts to set the capacity of this vector.
-    ///
-    /// * When the given `capacity` is equal to this vector's capacity,
-    /// then this is a no-op.
-    /// * When the given `capacity` is greater than this vector's capacity,
-    /// then this is equivalent to `Vec::reserve_exact(capacity - vec.capacity())`.
-    /// The allocator may still reserve a larger capacity than requested.
-    /// * When the given `capacity` is less than this vector's capacity.
-    /// this is equivalent to calling `Vec::shrink_to_fit()` and then
-    /// reserving the space needed using `Vec::reserve_exact(capacity)`. The
-    /// allocator may still reserve a larger capacity than requested.
-    pub fn set_capacity_exact(&mut self, capacity: usize) {
-        let v = self.v.as_mut().unwrap();
-
-        if capacity > v.capacity() {
-            let additional = capacity - v.capacity();
-            v.reserve_exact(additional);
-        } else if capacity < v.capacity() {
-            v.shrink_to_fit();
-            if capacity > v.capacity() {
-                let additional = capacity - v.capacity();
-                v.reserve_exact(additional);
-            }
-        }
-    }
-
-    /// The current capacity of this vector.
-    pub fn capacity(&self) -> usize {
-        self.v.as_ref().unwrap().capacity()
-    }
-
-    /// Consumes this `MemberRefVecMut` and returns the underlying `Vec<&'static mut T>`.
     pub fn into_inner(mut self) -> Vec<&'static mut T> {
         let v = self.v.take().unwrap();
-        let v = ManuallyDrop::into_inner(v);
         v
     }
-}
 
-impl<T: 'static + Sized> Drop for MemberRefVecMut<T> {
-    fn drop(&mut self) {
-        if let Some(v) = self.v.take() {
-            let _ = ManuallyDrop::into_inner(v);
-        }
+    #[inline]
+    fn convert_to<'a>(mut v: Vec<&'static mut T>) -> Vec<&'a T> {
+        v.clear();
+        let converted_v: Vec<&'a T> = v.into_iter().map(|_| unreachable!()).collect();
+        converted_v
+    }
+
+    #[inline]
+    fn convert_to_mut<'a>(mut v: Vec<&'static mut T>) -> Vec<&'a mut T> {
+        v.clear();
+        let converted_v: Vec<&'a mut T> = v.into_iter().map(|_| unreachable!()).collect();
+        converted_v
+    }
+
+    #[inline]
+    fn convert_from<'a>(mut v: Vec<&'a T>) -> Vec<&'static mut T> {
+        v.clear();
+        let converted_v: Vec<&'static mut T> = v.into_iter().map(|_| unreachable!()).collect();
+        converted_v
+    }
+
+    #[inline]
+    fn convert_from_mut<'a>(mut v: Vec<&'a mut T>) -> Vec<&'static mut T> {
+        v.clear();
+        let converted_v: Vec<&'static mut T> = v.into_iter().map(|_| unreachable!()).collect();
+        converted_v
     }
 }
 
@@ -631,26 +224,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() {
+    fn test_take_put() {
         let test_data_1: Vec<u64> = vec![0, 1, 2];
         let test_data_2: Vec<u64> = vec![3, 4, 5, 6];
 
-        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(10);
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
         let capacity = mrv.capacity();
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), capacity);
+        let mut borrowed_vec = mrv.take_empty_vec();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.push(&test_data_1);
+        borrowed_vec.push(&test_data_2);
+        i_expect_a_slice_of_refs(borrowed_vec.as_slice());
 
-            borrowed_vec.push(&test_data_1);
-            borrowed_vec.push(&test_data_2);
-
-            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
-        });
-
+        mrv.put(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), capacity);
-
         assert_eq!(&test_data_1, &[0, 1, 2]);
         assert_eq!(&test_data_2, &[3, 4, 5, 6]);
 
@@ -659,19 +249,16 @@ mod tests {
         mrv.set_capacity(capacity + 10);
         let capacity = mrv.capacity();
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), capacity);
+        let mut borrowed_vec = mrv.take_empty_vec();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.push(&test_data_1);
+        borrowed_vec.push(&test_data_2);
+        i_expect_a_slice_of_refs(borrowed_vec.as_slice());
 
-            borrowed_vec.push(&test_data_2);
-            borrowed_vec.push(&test_data_1);
-
-            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
-        });
-
+        mrv.put(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), capacity);
-
         assert_eq!(&test_data_1, &[0, 1, 2]);
         assert_eq!(&test_data_2, &[3, 4, 5, 6]);
 
@@ -679,79 +266,59 @@ mod tests {
 
         let mut borrow_capacity = capacity + 100;
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), capacity);
+        let mut borrowed_vec = mrv.take_empty_vec();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.reserve(borrow_capacity - capacity);
+        borrow_capacity = borrowed_vec.capacity();
+        borrowed_vec.push(&test_data_1);
+        borrowed_vec.push(&test_data_2);
+        i_expect_a_slice_of_refs(borrowed_vec.as_slice());
 
-            borrowed_vec.reserve(borrow_capacity - capacity);
-            borrow_capacity = borrowed_vec.capacity();
-
-            borrowed_vec.push(&test_data_1);
-            borrowed_vec.push(&test_data_2);
-
-            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
-        });
-
+        mrv.put(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), borrow_capacity);
-
         assert_eq!(&test_data_1, &[0, 1, 2]);
         assert_eq!(&test_data_2, &[3, 4, 5, 6]);
 
-        // -- Test moving value inside closure ---------------------
+        // -- Test moving value -------------------------------------
 
-        mrv.as_empty_vec_of_refs(|mut borrowed_vec| {
-            let mut new_vec = Vec::new();
+        let mut new_vec = Vec::new();
 
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), borrow_capacity);
+        let mut borrowed_vec = mrv.take_empty_vec();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), borrow_capacity);
+        std::mem::swap(&mut new_vec, &mut borrowed_vec);
+        borrowed_vec.push(&test_data_1);
+        borrowed_vec.push(&test_data_2);
+        borrow_capacity = borrowed_vec.capacity();
+        i_expect_a_slice_of_refs(borrowed_vec.as_slice());
 
-            std::mem::swap(&mut new_vec, &mut borrowed_vec);
-
-            borrowed_vec.push(&test_data_2);
-            borrowed_vec.push(&test_data_1);
-
-            borrow_capacity = borrowed_vec.capacity();
-
-            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
-        });
-
+        mrv.put(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), borrow_capacity);
-
         assert_eq!(&test_data_1, &[0, 1, 2]);
         assert_eq!(&test_data_2, &[3, 4, 5, 6]);
-    }
-
-    fn i_expect_a_slice_of_refs(s: &[&Vec<u64>]) {
-        for v in s.iter() {
-            for item in v.iter() {
-                println!("{}", *item);
-            }
-        }
     }
 
     #[test]
-    fn test_mut() {
+    fn test_take_put_mut() {
         let mut test_data_1: Vec<u64> = vec![0, 1, 2];
         let mut test_data_2: Vec<u64> = vec![3, 4, 5, 6];
 
-        let mut mrv = MemberRefVecMut::<Vec<u64>>::with_capacity(10);
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
         let capacity = mrv.capacity();
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), capacity);
+        let mut borrowed_vec = mrv.take_empty_vec_mut();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.push(&mut test_data_1);
+        borrowed_vec.push(&mut test_data_2);
+        i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
 
-            borrowed_vec.push(&mut test_data_1);
-            borrowed_vec.push(&mut test_data_2);
-
-            i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
-        });
-
+        mrv.put_mut(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), capacity);
-
         assert_eq!(&test_data_1, &[100, 101, 102]);
         assert_eq!(&test_data_2, &[203, 204, 205, 206]);
 
@@ -760,19 +327,16 @@ mod tests {
         mrv.set_capacity(capacity + 10);
         let capacity = mrv.capacity();
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
-            assert_eq!(borrowed_vec.len(), 0);
-            assert_eq!(borrowed_vec.capacity(), capacity);
+        let mut borrowed_vec = mrv.take_empty_vec_mut();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.push(&mut test_data_2);
+        borrowed_vec.push(&mut test_data_1);
+        i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
 
-            borrowed_vec.push(&mut test_data_2);
-            borrowed_vec.push(&mut test_data_1);
-
-            i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
-        });
-
+        mrv.put_mut(borrowed_vec);
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), capacity);
-
         assert_eq!(&test_data_1, &[300, 301, 302]);
         assert_eq!(&test_data_2, &[303, 304, 305, 306]);
 
@@ -780,48 +344,219 @@ mod tests {
 
         let mut borrow_capacity = capacity + 100;
 
-        mrv.as_empty_vec_of_refs(|borrowed_vec| {
+        let mut borrowed_vec = mrv.take_empty_vec_mut();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), capacity);
+        borrowed_vec.reserve(borrow_capacity - capacity);
+        borrow_capacity = borrowed_vec.capacity();
+        borrowed_vec.push(&mut test_data_1);
+        borrowed_vec.push(&mut test_data_2);
+        i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
+
+        mrv.put_mut(borrowed_vec);
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), borrow_capacity);
+        assert_eq!(&test_data_1, &[400, 401, 402]);
+        assert_eq!(&test_data_2, &[503, 504, 505, 506]);
+
+        // -- Test moving value -------------------------------------
+
+        let mut new_vec = Vec::new();
+
+        let mut borrowed_vec = mrv.take_empty_vec_mut();
+        assert_eq!(borrowed_vec.len(), 0);
+        assert_eq!(borrowed_vec.capacity(), borrow_capacity);
+        std::mem::swap(&mut new_vec, &mut borrowed_vec);
+        borrowed_vec.push(&mut test_data_2);
+        borrowed_vec.push(&mut test_data_1);
+        borrow_capacity = borrowed_vec.capacity();
+        i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
+
+        mrv.put_mut(borrowed_vec);
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), borrow_capacity);
+        assert_eq!(&test_data_1, &[600, 601, 602]);
+        assert_eq!(&test_data_2, &[603, 604, 605, 606]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_take_assert() {
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
+        let _borrowed_vec = mrv.take_empty_vec();
+        let _borrowed_vec_2 = mrv.take_empty_vec();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_take_mut_assert() {
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
+        let _borrowed_vec = mrv.take_empty_vec_mut();
+        let _borrowed_vec_2 = mrv.take_empty_vec_mut();
+    }
+
+    #[test]
+    fn test_use_as_empty_vec() {
+        let test_data_1: Vec<u64> = vec![0, 1, 2];
+        let test_data_2: Vec<u64> = vec![3, 4, 5, 6];
+
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
+        let capacity = mrv.capacity();
+
+        mrv.use_as_empty_vec(|borrowed_vec| {
             assert_eq!(borrowed_vec.len(), 0);
             assert_eq!(borrowed_vec.capacity(), capacity);
+            borrowed_vec.push(&test_data_1);
+            borrowed_vec.push(&test_data_2);
+            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
+        });
 
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), capacity);
+        assert_eq!(&test_data_1, &[0, 1, 2]);
+        assert_eq!(&test_data_2, &[3, 4, 5, 6]);
+
+        // -- Test setting capacity from struct ---------------------
+
+        mrv.set_capacity(capacity + 10);
+        let capacity = mrv.capacity();
+
+        mrv.use_as_empty_vec(|borrowed_vec| {
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), capacity);
+            borrowed_vec.push(&test_data_1);
+            borrowed_vec.push(&test_data_2);
+            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
+        });
+
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), capacity);
+        assert_eq!(&test_data_1, &[0, 1, 2]);
+        assert_eq!(&test_data_2, &[3, 4, 5, 6]);
+
+        // -- Test setting capacity from borrowed struct ------------
+
+        let mut borrow_capacity = capacity + 100;
+
+        mrv.use_as_empty_vec(|borrowed_vec| {
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), capacity);
             borrowed_vec.reserve(borrow_capacity - capacity);
             borrow_capacity = borrowed_vec.capacity();
+            borrowed_vec.push(&test_data_1);
+            borrowed_vec.push(&test_data_2);
+            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
+        });
 
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), borrow_capacity);
+        assert_eq!(&test_data_1, &[0, 1, 2]);
+        assert_eq!(&test_data_2, &[3, 4, 5, 6]);
+
+        // -- Test moving value inside closure ---------------------
+
+        mrv.use_as_empty_vec(|mut borrowed_vec| {
+            let mut new_vec = Vec::new();
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), borrow_capacity);
+            std::mem::swap(&mut new_vec, &mut borrowed_vec);
+            borrowed_vec.push(&test_data_1);
+            borrowed_vec.push(&test_data_2);
+            borrow_capacity = borrowed_vec.capacity();
+            i_expect_a_slice_of_refs(borrowed_vec.as_slice());
+        });
+
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), borrow_capacity);
+        assert_eq!(&test_data_1, &[0, 1, 2]);
+        assert_eq!(&test_data_2, &[3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn test_use_as_empty_vec_mut() {
+        let mut test_data_1: Vec<u64> = vec![0, 1, 2];
+        let mut test_data_2: Vec<u64> = vec![3, 4, 5, 6];
+
+        let mut mrv = MemberRefVec::<Vec<u64>>::with_capacity(2);
+        let capacity = mrv.capacity();
+
+        mrv.use_as_empty_vec_mut(|borrowed_vec| {
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), capacity);
             borrowed_vec.push(&mut test_data_1);
             borrowed_vec.push(&mut test_data_2);
+            i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
+        });
 
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), capacity);
+        assert_eq!(&test_data_1, &[100, 101, 102]);
+        assert_eq!(&test_data_2, &[203, 204, 205, 206]);
+
+        // -- Test setting capacity from struct ---------------------
+
+        mrv.set_capacity(capacity + 10);
+        let capacity = mrv.capacity();
+
+        mrv.use_as_empty_vec_mut(|borrowed_vec| {
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), capacity);
+            borrowed_vec.push(&mut test_data_2);
+            borrowed_vec.push(&mut test_data_1);
+            i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
+        });
+
+        assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
+        assert_eq!(mrv.capacity(), capacity);
+        assert_eq!(&test_data_1, &[300, 301, 302]);
+        assert_eq!(&test_data_2, &[303, 304, 305, 306]);
+
+        // -- Test setting capacity from borrowed struct ------------
+
+        let mut borrow_capacity = capacity + 100;
+
+        mrv.use_as_empty_vec_mut(|borrowed_vec| {
+            assert_eq!(borrowed_vec.len(), 0);
+            assert_eq!(borrowed_vec.capacity(), capacity);
+            borrowed_vec.reserve(borrow_capacity - capacity);
+            borrow_capacity = borrowed_vec.capacity();
+            borrowed_vec.push(&mut test_data_1);
+            borrowed_vec.push(&mut test_data_2);
             i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
         });
 
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), borrow_capacity);
-
         assert_eq!(&test_data_1, &[400, 401, 402]);
         assert_eq!(&test_data_2, &[503, 504, 505, 506]);
 
         // -- Test moving value inside closure ---------------------
 
-        mrv.as_empty_vec_of_refs(|mut borrowed_vec| {
+        mrv.use_as_empty_vec_mut(|mut borrowed_vec| {
             let mut new_vec = Vec::new();
-
             assert_eq!(borrowed_vec.len(), 0);
             assert_eq!(borrowed_vec.capacity(), borrow_capacity);
-
             std::mem::swap(&mut new_vec, &mut borrowed_vec);
-
             borrowed_vec.push(&mut test_data_2);
             borrowed_vec.push(&mut test_data_1);
-
             borrow_capacity = borrowed_vec.capacity();
-
             i_expect_a_slice_of_mut_refs(borrowed_vec.as_mut_slice());
         });
 
         assert_eq!(mrv.v.as_ref().unwrap().len(), 0);
         assert_eq!(mrv.capacity(), borrow_capacity);
-
         assert_eq!(&test_data_1, &[600, 601, 602]);
         assert_eq!(&test_data_2, &[603, 604, 605, 606]);
+    }
+
+    fn i_expect_a_slice_of_refs(s: &[&Vec<u64>]) {
+        for (i, v) in s.iter().enumerate() {
+            if i == 0 {
+                assert_eq!(&v[..], &[0, 1, 2]);
+            } else if i == 1 {
+                assert_eq!(&v[..], &[3, 4, 5, 6]);
+            }
+        }
     }
 
     fn i_expect_a_slice_of_mut_refs(s: &mut [&mut Vec<u64>]) {
