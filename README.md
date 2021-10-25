@@ -37,7 +37,7 @@ Option 2 is to use this crate. Here's how it works:
 
 Because Rust does not like self-referencing structs, the `MemberRefVec` must contain the type `Vec<&'static T>`. But it is more than likely your data does not have a static lifetime.
 
-The key trick here is a function in this struct that converts this `Vec<&'static T>` into a `Vec<&'a T>`, which is then sent to a closure. This operation is safe because this Vec is always cleared before being sent to the closure, meaning no uninitialized data can be ever be read from it and cause undefined behavior. It also avoids self-referential structs by automatically clearing the Vec at the end of the closure's scope.
+The key trick here is that this struct converts this `Vec<&'static T>` into a `Vec<&'a T>` when you acess one of its methods. This operation is safe because this Vec is always cleared before being sent to the closure, meaning no uninitialized data can be ever be read from it and cause undefined behavior. It also avoids self-referential structs by automatically clearing the Vec at the end of the closure's scope.
 ```rust
 use member_ref_vec::MemberRefVec;
 
