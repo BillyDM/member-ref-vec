@@ -1,14 +1,10 @@
-//! ***Please note that the safety of this code has not been battle-tested yet. Use at your
-//! own risk! Most of the functionality of this crate can also be acheived using [`smallvec`],
-//! so please consider using that before considering to use this crate.***
-//!
 //! This crate allows you to create a "temporary" Vec of references which persists its
 //! allocated memory and which can be stored as a member variable.
 //!
 //! For example, say that you want to prepare a Vec of buffer references to send to another
-//! piece of your code. However, the issue here is that this will allocate memory, which can
-//! cause issues with performance (or in the case of realtime code, allocation of any kind
-//! is unacceptable).
+//! piece of your code. But the issue is that this will allocate memory, which can lead to
+//! issues with performance (or in the case of realtime code, allocation of any kind is
+//! unacceptable).
 //! ```rust
 //! # let my_buffer_1: [f32; 256] = [0.0; 256];
 //! # let my_buffer_2: [f32; 256] = [0.0; 256];
@@ -38,25 +34,26 @@
 //! i_want_a_slice_of_references(&buffers[..]);
 //! ```
 //!
-//! However, note that if we push more than the 8 slots we defined in this SmallVec, then it
+//! However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
 //! will allocate memory again. If the maximum number of slots is not known at compile-time,
 //! you have 2 options:
 //!
 //! Option 1 is to just allocate a large number of slots and hope that it never exceeds
 //! capacity. However, this can potentially overflow your stack if it gets too large, and if
 //! the majority of the time only a few slots are being used, there can be a performance
-//! penalty of having a function with an unusually large stack size.
+//! penalty in having a function with an unusually large stack size.
 //!
-//! Option 2 is to use this crate. It works by creating a struct that contains a Vec of
-//! static references that can be stored in a member variable. Because Rust does not like
-//! self-referencing structs very well, this Vec must have the type `Vec<&'static T>`.
-//! However, it's more than likely that your data does not have a static lifetime. The key
-//! trick here is that in order to use this struct, it must be borrowed and used inside a
-//! closure. This function converts this `Vec<&'static T>` into a `Vec<&'a T>` that is then
-//! sent to your closure. This operation remains safe because the function ensures that the
-//! Vec it sends you is always empty, meaning no uninitialized data can be ever be read from
-//! it and cause undefined behavior. It also automatically clears the Vec at the end of the
-//! closure's scope so as to avoid self-referential structs.
+//! Option 2 is to use this crate. Here's how it works:
+//!
+//! Because Rust does not like self-referencing structs, the `MemberRefVec` must contain the
+//! type `Vec<&'static T>`. But it is more than likely your data does not have a static
+//! lifetime.
+//!
+//! The key trick here is a function in this struct that converts this `Vec<&'static T>`
+//! into a `Vec<&'a T>`, which is then sent to a closure. This operation is safe because this
+//! Vec is always cleared before being sent to the closure, meaning no uninitialized data can
+//! be ever be read from it and cause undefined behavior. It also avoids self-referential
+//! structs by automatically clearing the Vec at the end of the closure's scope.
 //! ```rust
 //! # let my_buffer_1: [f32; 256] = [0.0; 256];
 //! # let my_buffer_2: [f32; 256] = [0.0; 256];
@@ -64,7 +61,7 @@
 //! use member_ref_vec::MemberRefVec;
 //!
 //! // Pre-allocate some capacity in a non-performance critical part
-//! // of your code. Also, please note the lack of the `&` symbol in
+//! // of your code. Also please note the lack of the `&` symbol in
 //! // the type parameter here. This is *not* allocating 1024
 //! // buffers with 256 f32s, This is still just allocating 1024
 //! // references to buffers.
@@ -74,7 +71,8 @@
 //!
 //! buffer_refs.as_empty_vec_of_refs(|buffers| {
 //!   // Does not allocated memory! (as long as you don't push more
-//!   // elements than what was allocated in the non-realtime thread)
+//!   // elements than what was allocated in the non-performance
+//!   // critical part of your code)
 //!   buffers.push(&my_buffer_1);
 //!   buffers.push(&my_buffer_2);
 //!
@@ -83,6 +81,11 @@
 //! ```
 //!
 //! ## Safety Notes
+//! *Please note that the safety of this code has not been battle-tested yet. It appears
+//! to be safe through my brief testing, but use at your own risk. Most of the
+//! functionality of this crate can also be acheived using [`smallvec`], so please consider
+//! using that before considering to use this crate.*
+//! 
 //! This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
 //! memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
 //! layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
@@ -96,9 +99,9 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 /// its allocated memory and which can be stored as a member variable.
 ///
 /// For example, say that you want to prepare a Vec of buffer references to send to another
-/// piece of your code. However, the issue here is that this will allocate memory, which can
-/// cause issues with performance (or in the case of realtime code, allocation of any kind
-/// is unacceptable).
+/// piece of your code. But the issue is that this will allocate memory, which can lead to
+/// issues with performance (or in the case of realtime code, allocation of any kind is
+/// unacceptable).
 /// ```rust
 /// # let my_buffer_1: [f32; 256] = [0.0; 256];
 /// # let my_buffer_2: [f32; 256] = [0.0; 256];
@@ -128,25 +131,26 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 /// i_want_a_slice_of_references(&buffers[..]);
 /// ```
 ///
-/// However, note that if we push more than the 8 slots we defined in this SmallVec, then it
+/// However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
 /// will allocate memory again. If the maximum number of slots is not known at compile-time,
 /// you have 2 options:
 ///
 /// Option 1 is to just allocate a large number of slots and hope that it never exceeds
 /// capacity. However, this can potentially overflow your stack if it gets too large, and if
 /// the majority of the time only a few slots are being used, there can be a performance
-/// penalty of having a function with an unusually large stack size.
+/// penalty in having a function with an unusually large stack size.
 ///
-/// Option 2 is to use this struct. It works by creating a struct that contains a Vec of
-/// static references that can be stored in a member variable. Because Rust does not like
-/// self-referencing structs very well, this Vec must have the type `Vec<&'static T>`.
-/// However, it's more than likely that your data does not have a static lifetime. The key
-/// trick here is that in order to use this struct, it must be borrowed and used inside a
-/// closure. This function converts this `Vec<&'static T>` into a `Vec<&'a T>` that is then
-/// sent to your closure. This operation remains safe because the function ensures that the
-/// Vec it sends you is always empty, meaning no uninitialized data can be ever be read from
-/// it and cause undefined behavior. It also automatically clears the Vec at the end of the
-/// closure's scope so as to avoid self-referential structs.
+/// Option 2 is to use this struct. Here's how it works:
+///
+/// Because Rust does not like self-referencing structs, the `MemberRefVec` must contain the
+/// type `Vec<&'static T>`. But it is more than likely your data does not have a static
+/// lifetime.
+///
+/// The key trick here is a function in this struct that converts this `Vec<&'static T>`
+/// into a `Vec<&'a T>`, which is then sent to a closure. This operation is safe because this
+/// Vec is always cleared before being sent to the closure, meaning no uninitialized data can
+/// be ever be read from it and cause undefined behavior. It also avoids self-referential
+/// structs by automatically clearing the Vec at the end of the closure's scope.
 /// ```rust
 /// # let my_buffer_1: [f32; 256] = [0.0; 256];
 /// # let my_buffer_2: [f32; 256] = [0.0; 256];
@@ -154,7 +158,7 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 /// use member_ref_vec::MemberRefVec;
 ///
 /// // Pre-allocate some capacity in a non-performance critical part
-/// // of your code. Also, please note the lack of the `&` symbol in
+/// // of your code. Also please note the lack of the `&` symbol in
 /// // the type parameter here. This is *not* allocating 1024
 /// // buffers with 256 f32s, This is still just allocating 1024
 /// // references to buffers.
@@ -164,7 +168,8 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 ///
 /// buffer_refs.as_empty_vec_of_refs(|buffers| {
 ///   // Does not allocated memory! (as long as you don't push more
-///   // elements than what was allocated in the non-realtime thread)
+///   // elements than what was allocated in the non-performance
+///   // critical part of your code)
 ///   buffers.push(&my_buffer_1);
 ///   buffers.push(&my_buffer_2);
 ///
@@ -173,6 +178,11 @@ use std::{ffi::c_void, mem::ManuallyDrop};
 /// ```
 ///
 /// ## Safety Notes
+/// *Please note that the safety of this code has not been battle-tested yet. It appears
+/// to be safe through my brief testing, but use at your own risk. Most of the
+/// functionality of this struct can also be acheived using [`smallvec`], so please consider
+/// using that before considering to use this struct.*
+/// 
 /// This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
 /// memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
 /// layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
@@ -221,7 +231,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
     ///
     /// However, the reserved capacity of this vector *will* be retained across
     /// consecutive calls to `as_empty_vec_of_refs()`.
-    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut ManuallyDrop<Vec<&'a T>>)>(&mut self, f: F) {
+    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut Vec<&'a T>)>(&mut self, f: F) {
         let mut v = self.v.take().unwrap();
 
         v.clear();
@@ -237,6 +247,10 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         // * We use the same capacity, so all memory here points to valid
         // owned allocated data.
         //
+        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
+        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
+        // of this function's scope.
+        //
         // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
         // always have the exact same layout in memory.
         let mut borrowed_v: ManuallyDrop<Vec<&'a T>> = ManuallyDrop::new(unsafe {
@@ -246,7 +260,7 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         (f)(&mut borrowed_v);
 
         // Make sure that any items that were pushed by the user are
-        // deallocated correctly.
+        // dropped correctly.
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
@@ -261,6 +275,10 @@ impl<T: 'static + Sized> MemberRefVec<T> {
         //
         // * We use the same capacity, so all memory here points to valid
         // owned allocated data.
+        //
+        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
+        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
+        // of this function's scope.
         //
         // TODO: Check that `Vec<&'static T>` and `Vec<&'a T>` do indeed
         // always have the exact same layout in memory.
@@ -346,9 +364,9 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 /// its allocated memory and which can be stored as a member variable.
 ///
 /// For example, say that you want to prepare a Vec of buffer references to send to another
-/// piece of your code. However, the issue here is that this will allocate memory, which can
-/// cause issues with performance (or in the case of realtime code, allocation of any kind
-/// is unacceptable).
+/// piece of your code. But the issue is that this will allocate memory, which can lead to
+/// issues with performance (or in the case of realtime code, allocation of any kind is
+/// unacceptable).
 /// ```rust
 /// # let mut my_buffer_1: [f32; 256] = [0.0; 256];
 /// # let mut my_buffer_2: [f32; 256] = [0.0; 256];
@@ -378,25 +396,27 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 /// i_want_a_slice_of_mut_references(&mut buffers[..]);
 /// ```
 ///
-/// However, note that if we push more than the 8 slots we defined in this SmallVec, then it
+/// However, if we happen to push more than the 8 slots we defined in this SmallVec, then it
 /// will allocate memory again. If the maximum number of slots is not known at compile-time,
 /// you have 2 options:
 ///
 /// Option 1 is to just allocate a large number of slots and hope that it never exceeds
 /// capacity. However, this can potentially overflow your stack if it gets too large, and if
 /// the majority of the time only a few slots are being used, there can be a performance
-/// penalty of having a function with an unusually large stack size.
+/// penalty in having a function with an unusually large stack size.
 ///
-/// Option 2 is to use this struct. It works by creating a struct that contains a Vec of
-/// static references that can be stored in a member variable. Because Rust does not like
-/// self-referencing structs very well, this Vec must have the type `Vec<&'static mut T>`.
-/// However, it's more than likely that your data does not have a static lifetime. The key
-/// trick here is that in order to use this struct, it must be borrowed and used inside a
-/// closure. This function converts this `Vec<&'static mut T>` into a `Vec<&'a mut T>` that
-/// is then sent to your closure. This operation remains safe because the function ensures
-/// that the Vec it sends you is always empty, meaning no uninitialized data can be ever be
-/// read from it and cause undefined behavior. It also automatically clears the Vec at the
-/// end of the closure's scope so as to avoid self-referential structs.
+/// Option 2 is to use this struct. Here's how it works:
+///
+/// Because Rust does not like self-referencing structs, the `MemberRefVecMut` must contain
+/// the type `Vec<&'static mut T>`. But it is more than likely your data does not have a
+/// static lifetime.
+///
+/// The key trick here is a function in this struct that converts this `Vec<&'static mut T>`
+/// into a `Vec<&'a mut T>`, which is then sent to a closure. This operation is safe because
+/// this Vec is always cleared before being sent to the closure, meaning no uninitialized
+/// data can be ever be read from it and cause undefined behavior. It also avoids
+/// self-referential structs by automatically clearing the Vec at the end of the closure's
+/// scope.
 /// ```rust
 /// # let mut my_buffer_1: [f32; 256] = [0.0; 256];
 /// # let mut my_buffer_2: [f32; 256] = [0.0; 256];
@@ -414,7 +434,8 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 ///
 /// buffer_refs.as_empty_vec_of_refs(|buffers| {
 ///   // Does not allocated memory! (as long as you don't push more
-///   // elements than what was allocated in the non-realtime thread)
+///   // elements than what was allocated in the non-performance
+///   // critical part of your code)
 ///   buffers.push(&mut my_buffer_1);
 ///   buffers.push(&mut my_buffer_2);
 ///
@@ -423,6 +444,11 @@ impl<T: 'static + Sized> Drop for MemberRefVec<T> {
 /// ```
 ///
 /// ## Safety Notes
+/// *Please note that the safety of this code has not been battle-tested yet. It appears
+/// to be safe through my brief testing, but use at your own risk. Most of the
+/// functionality of this struct can also be acheived using [`smallvec`], so please consider
+/// using that before considering to use this struct.*
+/// 
 /// This crate currently assumes that a `Vec<&'static T>` always has the exact same layout in
 /// memory as a `Vec<&'a T>` (and that a `Vec<&'static mut T>` always has the exact same
 /// layout in memory as a `Vec<&'a mut T>`) where `T: 'static + Sized`. If you happen to know
@@ -457,7 +483,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     /// Creates a new `MemberRefVecMut` from the given vector `v`.
     pub fn from_vec(mut v: Vec<&'static mut T>) -> Self {
         v.clear();
-        
+
         Self {
             v: Some(ManuallyDrop::new(v)),
         }
@@ -471,7 +497,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
     ///
     /// However, the reserved capacity of this vector *will* be retained across
     /// consecutive calls to `as_empty_vec_of_refs()`.
-    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut ManuallyDrop<Vec<&'a mut T>>)>(&mut self, f: F) {
+    pub fn as_empty_vec_of_refs<'a, F: FnOnce(&mut Vec<&'a mut T>)>(&mut self, f: F) {
         let mut v = self.v.take().unwrap();
 
         v.clear();
@@ -487,6 +513,10 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         // * We use the same capacity, so all memory here points to valid
         // owned allocated data.
         //
+        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
+        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
+        // of this function's scope.
+        //
         // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
         // always have the exact same layout in memory.
         let mut borrowed_v: ManuallyDrop<Vec<&'a mut T>> = ManuallyDrop::new(unsafe {
@@ -496,7 +526,7 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         (f)(&mut borrowed_v);
 
         // Make sure that any items that were pushed by the user are
-        // deallocated correctly.
+        // dropped correctly.
         borrowed_v.clear();
 
         // Make sure that the pointer and capacity are still correct in case
@@ -511,6 +541,10 @@ impl<T: 'static + Sized> MemberRefVecMut<T> {
         //
         // * We use the same capacity, so all memory here points to valid
         // owned allocated data.
+        //
+        // * Both the owned Vec `v` and the borrowed Vec `borrowed_v` are
+        // wrapped in a `ManuallyDrop`, so they will not be dropped at the end
+        // of this function's scope.
         //
         // TODO: Check that `Vec<&'static mut T>` and `Vec<&'a mut T>` do indeed
         // always have the exact same layout in memory.
